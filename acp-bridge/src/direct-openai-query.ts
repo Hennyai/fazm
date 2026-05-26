@@ -19,15 +19,21 @@ const openAISessions = new Map<string, OpenAISessionEntry>();
 const openAISessionIdToKey = new Map<string, string>();
 
 export function isDirectOpenAIModel(modelId: string | undefined): boolean {
+  if (process.env.FAZM_USE_DIRECT_MODEL_ONLY === "true") return true;
   if (!modelId) return false;
-  return modelId.startsWith("direct-") || modelId.startsWith("ollama-") || modelId.startsWith("openai-");
+  return modelId.startsWith("direct-") || modelId.startsWith("ollama-") || modelId.startsWith("openai-") || modelId.startsWith("models/gemini-");
 }
 
 export async function handleDirectOpenAIQuery(msg: QueryMessage, deps: DirectOpenAIQueryDeps): Promise<void> {
   const { logErr, send, sendWithSession, getProvider, registerSession } = deps;
   const sessionKey = msg.sessionKey ?? msg.model ?? "direct-default";
   const cwd = msg.cwd ?? process.env.HOME ?? process.cwd();
-  const modelId = msg.model ?? "gpt-4o";
+  
+  // Use the direct model from env if in bypass mode or if model is missing
+  const modelId = (process.env.FAZM_USE_DIRECT_MODEL_ONLY === "true" ? process.env.FAZM_DIRECT_MODEL : null) 
+    ?? msg.model 
+    ?? process.env.FAZM_DIRECT_MODEL 
+    ?? "gpt-4o";
 
   let provider: DirectOpenAIProvider;
   try {
@@ -83,9 +89,13 @@ export async function handleDirectOpenAIQuery(msg: QueryMessage, deps: DirectOpe
       prompt: [{ type: "text", text: msg.prompt }],
     })) as { stopReason: string };
 
+    if (!collectedText) {
+        logErr("[direct-openai-query] model returned empty response");
+    }
+
     sendWithSession(sessionId, {
       type: "result",
-      text: collectedText,
+      text: collectedText || " ", // Send a space so it's not strictly empty
       sessionId,
       costUsd: 0,
       inputTokens: 0,

@@ -1558,49 +1558,56 @@ struct ModelToggleButton: View {
     }
 
     var body: some View {
-        Menu {
-            ForEach(shortcutSettings.availableModels) { model in
-                Button {
-                    let needsCodexAuth = model.id.hasPrefix("gpt-") && codexBackend.authMode == "none"
-                    if needsCodexAuth {
-                        codexBackend.pendingPickerModelId = model.id
-                        onCodexLogin?()
-                        return
-                    }
-                    if let localModel {
-                        localModel.wrappedValue = model.id
-                    }
-                    // Always write through to the global default so new pop-outs
-                    // and the floating bar inherit the most recent model choice.
-                    shortcutSettings.selectedModel = model.id
-                } label: {
-                    if selectedModelId == model.id {
-                        Label(model.label, systemImage: "checkmark")
-                    } else if model.id.hasPrefix("gpt-") && codexBackend.authMode == "none" {
-                        Label(model.label + " — Connect…", systemImage: "person.badge.key")
-                    } else {
-                        Text(model.label)
+        if UserDefaults.standard.bool(forKey: "useDirectModelOnly") {
+            Text("Direct")
+                .scaledFont(size: 11, weight: .medium)
+                .foregroundColor(.secondary)
+                .fixedSize()
+        } else {
+            Menu {
+                ForEach(shortcutSettings.availableModels) { model in
+                    Button {
+                        let needsCodexAuth = model.id.hasPrefix("gpt-") && codexBackend.authMode == "none"
+                        if needsCodexAuth {
+                            codexBackend.pendingPickerModelId = model.id
+                            onCodexLogin?()
+                            return
+                        }
+                        if let localModel {
+                            localModel.wrappedValue = model.id
+                        }
+                        // Always write through to the global default so new pop-outs
+                        // and the floating bar inherit the most recent model choice.
+                        shortcutSettings.selectedModel = model.id
+                    } label: {
+                        if selectedModelId == model.id {
+                            Label(model.label, systemImage: "checkmark")
+                        } else if model.id.hasPrefix("gpt-") && codexBackend.authMode == "none" {
+                            Label(model.label + " — Connect…", systemImage: "person.badge.key")
+                        } else {
+                            Text(model.label)
+                        }
                     }
                 }
-            }
-            Divider()
-            Button {
-                openCodexModelsSettings()
+                Divider()
+                Button {
+                    openCodexModelsSettings()
+                } label: {
+                    Label("Customize models…", systemImage: "slider.horizontal.3")
+                }
             } label: {
-                Label("Customize models…", systemImage: "slider.horizontal.3")
+                HStack(spacing: 2) {
+                    Text(selectedModelShortLabel)
+                        .scaledFont(size: 11, weight: .medium)
+                    Image(systemName: "chevron.down")
+                        .scaledFont(size: 7, weight: .medium)
+                }
+                .foregroundColor(.secondary)
             }
-        } label: {
-            HStack(spacing: 2) {
-                Text(selectedModelShortLabel)
-                    .scaledFont(size: 11, weight: .medium)
-                Image(systemName: "chevron.down")
-                    .scaledFont(size: 7, weight: .medium)
-            }
-            .foregroundColor(.secondary)
+            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
+            .fixedSize()
         }
-        .menuIndicator(.hidden)
-        .buttonStyle(.plain)
-        .fixedSize()
     }
 
     /// Open the main settings window (creating it if necessary) and scroll to

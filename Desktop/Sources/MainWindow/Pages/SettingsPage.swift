@@ -127,10 +127,18 @@ struct SettingsContentView: View {
     @AppStorage("devModeEnabled") private var devModeEnabled = false
 
     // Direct Model settings
+    @AppStorage("useDirectModelOnly") private var useDirectModelOnly: Bool = false
     @AppStorage("directProviderType") private var directProviderType: String = "openai"
     @AppStorage("directApiKey") private var directApiKey: String = ""
     @AppStorage("directApiBase") private var directApiBase: String = ""
     @AppStorage("directModelName") private var directModelName: String = ""
+    
+    @State private var fetchedModels: [String] = []
+    @State private var isFetchingModels: Bool = false
+    @State private var fetchModelsError: String? = nil
+    
+    @State private var isTestingModel: Bool = false
+    @State private var testModelResult: (success: Bool, message: String)? = nil
 
     // Voice Response (TTS) settings
     @AppStorage("voiceResponseEnabled") private var voiceResponseEnabled = true
@@ -2961,6 +2969,208 @@ struct SettingsContentView: View {
 
     // MARK: Direct Model
 
+    private func testDirectModel() {
+        guard !directApiBase.isEmpty else {
+            testModelResult = (false, "Please enter an API Base URL")
+            return
+        }
+        
+        isTestingModel = true
+        testModelResult = nil
+        
+        var baseUrl = directApiBase.trimmingCharacters(in: .whitespacesAndNewlines)
+        if baseUrl.hasSuffix("/") { baseUrl.removeLast() }
+        
+        let urlString: String
+        if directProviderType == "google" {
+            // Google usually looks like .../v1beta/models/model-id:generateContent
+            // The model name from the dropdown often already includes "models/"
+            let modelSegment = directModelName.hasPrefix("models/") ? directModelName : "models/\(directModelName)"
+            
+            if baseUrl.hasSuffix("/models") {
+                let idOnly = directModelName.replacingOccurrences(of: "models/", with: "")
+                urlString = "\(baseUrl)/\(idOnly):generateContent"
+            } else if baseUrl.contains("/models/") {
+                urlString = "\(baseUrl):generateContent"
+            } else {
+                urlString = "\(baseUrl)/\(modelSegment):generateContent"
+            }
+        } else if directProviderType == "anthropic" {
+            if baseUrl.hasSuffix("/v1/messages") {
+                urlString = baseUrl
+            } else if baseUrl.hasSuffix("/v1") {
+                urlString = "\(baseUrl)/messages"
+            } else {
+                urlString = "\(baseUrl)/v1/messages"
+            }
+        } else {
+            // OpenAI / Ollama / Groq
+            if baseUrl.hasSuffix("/chat/completions") {
+                urlString = baseUrl
+            } else {
+                urlString = "\(baseUrl)/chat/completions"
+            }
+        }
+        
+        guard let url = URL(string: urlString) else {
+            testModelResult = (false, "Invalid URL: \(urlString)")
+            isTestingModel = false
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 15
+        
+        var body: [String: Any] = [:]
+        
+        if directProviderType == "anthropic" {
+            request.setValue(directApiKey, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            body = [
+                "model": directModelName,
+                "messages": [["role": "user", "content": "hi"]],
+                "max_tokens": 10
+            ]
+        } else if directProviderType == "google" {
+            if var components = URLComponents(string: urlString) {
+                var queryItems = components.queryItems ?? []
+                if !queryItems.contains(where: { $0.name == "key" }) {
+                    queryItems.append(URLQueryItem(name: "key", value: directApiKey))
+                }
+                components.queryItems = queryItems
+                if let finalUrl = components.url {
+                    request.url = finalUrl
+                }
+            }
+            body = [
+                "contents": [["parts": [["text": "hi"]]]]
+            ]
+        } else {
+            if !directApiKey.isEmpty {
+                request.setValue("Bearer \(directApiKey)", forHTTPHeaderField: "Authorization")
+            }
+            body = [
+                "model": directModelName,
+                "messages": [["role": "user", "content": "hi"]],
+                "max_tokens": 10,
+                "stream": false
+            ]
+        }
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            testModelResult = (false, "Failed to create request body")
+            isTestingModel = false
+            return
+        }
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                isTestingModel = false
+                
+                if let error = error {
+                    testModelResult = (false, "Network error: \(error.localizedDescription)\nURL: \(urlString)")
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    testModelResult = (false, "Invalid response\nURL: \(urlString)")
+                    return
+                }
+                
+                if httpResponse.statusCode >= 200 && httpResponse.statusCode < 300 {
+                    testModelResult = (true, "Success! Model responded correctly.")
+                } else {
+                    let errorMessage = data.flatMap { String(data: $0, encoding: .utf8) } ?? "No response body"
+                    testModelResult = (false, "API Error (\(httpResponse.statusCode)): \(errorMessage.prefix(300))\nURL: \(urlString)")
+                }
+            }
+        }.resume()
+    }
+
+    private func fetchModels() {
+        guard !directApiBase.isEmpty else {
+            fetchModelsError = "Please enter an API Base URL"
+            return
+        }
+
+        isFetchingModels = true
+        fetchModelsError = nil
+        fetchedModels = []
+
+        var urlString = directApiBase
+        if !urlString.hasSuffix("/") { urlString += "/" }
+        
+        // standard OpenAI-compatible models endpoint
+        urlString += "models"
+        
+        guard let url = URL(string: urlString) else {
+            fetchModelsError = "Invalid Base URL"
+            isFetchingModels = false
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        
+        if directProviderType == "anthropic" {
+            request.setValue(directApiKey, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        } else if directProviderType == "google" {
+            // Google usually passes key as a query param or in header
+            if var components = URLComponents(string: urlString) {
+                components.queryItems = [URLQueryItem(name: "key", value: directApiKey)]
+                if let finalUrl = components.url {
+                    request.url = finalUrl
+                }
+            }
+        } else {
+            request.setValue("Bearer \(directApiKey)", forHTTPHeaderField: "Authorization")
+        }
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                isFetchingModels = false
+                
+                if let error = error {
+                    fetchModelsError = error.localizedDescription
+                    return
+                }
+
+                guard let data = data else {
+                    fetchModelsError = "No data received"
+                    return
+                }
+
+                do {
+                    if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        if let dataArr = json["data"] as? [[String: Any]] {
+                            // OpenAI format
+                            self.fetchedModels = dataArr.compactMap { $0["id"] as? String }.sorted()
+                        } else if let modelsArr = json["models"] as? [[String: Any]] {
+                            // Google format?
+                            self.fetchedModels = modelsArr.compactMap { $0["name"] as? String }.sorted()
+                        } else if directProviderType == "ollama" {
+                             // Ollama specific check if standard models fails?
+                             // Actually Ollama usually works with /v1/models if using the OpenAI compat layer
+                        }
+                        
+                        if self.fetchedModels.isEmpty {
+                            fetchModelsError = "No models found in response"
+                        }
+                    } else {
+                        fetchModelsError = "Invalid JSON format"
+                    }
+                } catch {
+                    fetchModelsError = "Failed to parse models: \(error.localizedDescription)"
+                }
+            }
+        }.resume()
+    }
+
     private var directModelSettingsSection: some View {
         VStack(spacing: 20) {
             settingsCard(settingId: "advanced.directmodel.config") {
@@ -2981,6 +3191,34 @@ struct SettingsContentView: View {
                         }
 
                         Spacer()
+                        
+                        Toggle("", isOn: $useDirectModelOnly)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .labelsHidden()
+                            .onChange(of: useDirectModelOnly) { _, newValue in
+                                AnalyticsManager.shared.settingToggled(setting: "use_direct_model_only", enabled: newValue)
+                                // Restart bridge to apply bypass
+                                DistributedNotificationCenter.default().postNotificationName(
+                                    NSNotification.Name("com.fazm.\(AppPaths.bundleScope).control"),
+                                    object: nil,
+                                    userInfo: ["command": "restartBridge"],
+                                    deliverImmediately: true
+                                )
+                            }
+                    }
+                    
+                    if useDirectModelOnly {
+                        HStack(spacing: 8) {
+                            Image(systemName: "bolt.shield.fill")
+                                .foregroundColor(.orange)
+                            Text("Bypass Mode Active: All queries will route directly to your provider.")
+                                .scaledFont(size: 12, weight: .medium)
+                                .foregroundColor(.orange)
+                        }
+                        .padding(8)
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(6)
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
@@ -2989,6 +3227,7 @@ struct SettingsContentView: View {
                             .foregroundColor(FazmColors.textSecondary)
 
                         Picker("", selection: $directProviderType) {
+                            Text("Anthropic").tag("anthropic")
                             Text("OpenAI / Groq").tag("openai")
                             Text("Google AI (Gemini)").tag("google")
                             Text("Ollama").tag("ollama")
@@ -3001,6 +3240,8 @@ struct SettingsContentView: View {
                                 directApiBase = "https://api.openai.com/v1"
                             } else if newValue == "google" && directApiBase.isEmpty {
                                 directApiBase = "https://generativelanguage.googleapis.com/v1beta"
+                            } else if newValue == "anthropic" && directApiBase.isEmpty {
+                                directApiBase = "https://api.anthropic.com"
                             }
                         }
                     }
@@ -3034,17 +3275,94 @@ struct SettingsContentView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Model Name")
-                            .scaledFont(size: 13, weight: .medium)
-                            .foregroundColor(FazmColors.textSecondary)
+                        HStack {
+                            Text("Model Name")
+                                .scaledFont(size: 13, weight: .medium)
+                                .foregroundColor(FazmColors.textSecondary)
+                            
+                            Spacer()
+                            
+                            Button(action: { fetchModels() }) {
+                                HStack(spacing: 4) {
+                                    if isFetchingModels {
+                                        ProgressView().controlSize(.mini)
+                                    } else {
+                                        Image(systemName: "arrow.clockwise")
+                                    }
+                                    Text("Scan Models")
+                                }
+                                .scaledFont(size: 11)
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundColor(FazmColors.purplePrimary)
+                        }
 
-                        TextField("e.g. gpt-4o, llama3, gemini-1.5-pro", text: $directModelName)
-                            .textFieldStyle(.plain)
-                            .padding(8)
+                        HStack {
+                            TextField("e.g. gpt-4o, llama3, gemini-1.5-pro", text: $directModelName)
+                                .textFieldStyle(.plain)
+                                .padding(8)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(FazmColors.backgroundTertiary)
+                                )
+                            
+                            if !fetchedModels.isEmpty {
+                                Picker("", selection: $directModelName) {
+                                    Text("Select a model...").tag("")
+                                    ForEach(fetchedModels, id: \.self) { model in
+                                        Text(model).tag(model)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .frame(width: 150)
+                            }
+                        }
+                        
+                        if let error = fetchModelsError {
+                            Text(error)
+                                .scaledFont(size: 11)
+                                .foregroundColor(.red)
+                        }
+                    }
+
+                    HStack {
+                        Button(action: { testDirectModel() }) {
+                            HStack(spacing: 6) {
+                                if isTestingModel {
+                                    ProgressView().controlSize(.mini)
+                                } else {
+                                    Image(systemName: "play.fill")
+                                }
+                                Text(isTestingModel ? "Testing..." : "Test Configuration")
+                            }
+                            .scaledFont(size: 13, weight: .medium)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
                             .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(FazmColors.backgroundTertiary)
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(FazmColors.purplePrimary)
                             )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isTestingModel)
+                        
+                        Spacer()
+                    }
+                    
+                    if let result = testModelResult {
+                        HStack(spacing: 8) {
+                            Image(systemName: result.success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .foregroundColor(result.success ? .green : .red)
+                            
+                            Text(result.message)
+                                .scaledFont(size: 12)
+                                .foregroundColor(result.success ? .green : .red)
+                                .textSelection(.enabled)
+                        }
+                        .padding(8)
+                        .background((result.success ? Color.green : Color.red).opacity(0.1))
+                        .cornerRadius(6)
                     }
 
                     HStack {
@@ -3459,204 +3777,26 @@ struct SettingsContentView: View {
                 }
             }
 
-            // Subscription card
+            // Account status card
             settingsCard(settingId: "about.subscription") {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 12) {
-                        Image(systemName: SubscriptionService.shared.isActive ? "checkmark.seal.fill" : "clock.fill")
-                            .scaledFont(size: 16)
-                            .foregroundColor(SubscriptionService.shared.isActive ? FazmColors.success : FazmColors.purplePrimary)
-                            .frame(width: 24, height: 24)
+                HStack(spacing: 16) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .scaledFont(size: 16)
+                        .foregroundColor(FazmColors.success)
+                        .frame(width: 24, height: 24)
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(SubscriptionService.shared.isActive ? "Fazm Pro" : (SubscriptionService.shared.isTrialExpired ? "Free Plan" : "Free Trial"))
-                                .scaledFont(size: 16, weight: .semibold)
-                                .foregroundColor(FazmColors.textPrimary)
-
-                            if SubscriptionService.shared.isActive {
-                                if let end = SubscriptionService.shared.currentPeriodEnd {
-                                    Text("Renews \(end.formatted(date: .abbreviated, time: .omitted))")
-                                        .scaledFont(size: 13)
-                                        .foregroundColor(FazmColors.textTertiary)
-                                }
-                            } else if !SubscriptionService.shared.isTrialExpired {
-                                let daysLeft = max(0, SubscriptionService.shared.trialDays - (Calendar.current.dateComponents([.day], from: SubscriptionService.shared.trialStartDate, to: Date()).day ?? 0))
-                                Text("\(daysLeft) days remaining in free trial")
-                                    .scaledFont(size: 13)
-                                    .foregroundColor(FazmColors.textTertiary)
-                            } else {
-                                Text("\(SubscriptionService.shared.freeMessagesPerDay) free messages per day")
-                                    .scaledFont(size: 13)
-                                    .foregroundColor(FazmColors.textTertiary)
-                            }
-                        }
-
-                        Spacer()
-
-                        if SubscriptionService.shared.isActive {
-                            Button(action: {
-                                Task { try? await SubscriptionService.shared.openBillingPortal() }
-                            }) {
-                                Text("Manage")
-                                    .scaledFont(size: 13, weight: .semibold)
-                                    .foregroundColor(FazmColors.textSecondary)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 6)
-                                    .background(FazmColors.backgroundTertiary)
-                                    .cornerRadius(6)
-                            }
-                            .buttonStyle(.plain)
-                        } else {
-                            Button(action: {
-                                AnalyticsManager.shared.subscriptionUpgradeTapped(source: "settings")
-                                Task { @MainActor in
-                                    do {
-                                        try await SubscriptionService.shared.openCheckout()
-                                    } catch AuthError.notSignedIn {
-                                        AuthState.shared.error = "Your session expired. Please sign in again to upgrade."
-                                        AuthService.shared.reconcileAuthState()
-                                    } catch {
-                                        log("SettingsPage: Upgrade failed: \(error.localizedDescription)")
-                                    }
-                                }
-                            }) {
-                                Text("Upgrade")
-                                    .scaledFont(size: 13, weight: .semibold)
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 6)
-                                    .background(FazmColors.purplePrimary)
-                                    .cornerRadius(6)
-                            }
-                            .buttonStyle(.plain)
-                        }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Fazm Pro")
+                            .scaledFont(size: 16, weight: .semibold)
+                            .foregroundColor(FazmColors.textPrimary)
+                        Text("Active subscription")
+                            .scaledFont(size: 13)
+                            .foregroundColor(FazmColors.textTertiary)
                     }
+
+                    Spacer()
                 }
             }
-
-            // Referral card
-            settingsCard(settingId: "about.referral") {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "person.2.fill")
-                            .scaledFont(size: 16)
-                            .foregroundStyle(FazmColors.purpleGradient)
-                            .frame(width: 24, height: 24)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Referrals")
-                                .scaledFont(size: 16, weight: .semibold)
-                                .foregroundColor(FazmColors.textPrimary)
-
-                            if isLoadingReferralStatus {
-                                Text("Loading...")
-                                    .scaledFont(size: 13)
-                                    .foregroundColor(FazmColors.textTertiary)
-                            } else if let status = referralStatus {
-                                if status.reward_months > 0 {
-                                    Text("$\(status.reward_months * 49) credit earned")
-                                        .scaledFont(size: 13)
-                                        .foregroundColor(FazmColors.success)
-                                } else if status.referred_count > 0 {
-                                    Text("\(status.referred_count) referred, \(status.completed_count) completed")
-                                        .scaledFont(size: 13)
-                                        .foregroundColor(FazmColors.textTertiary)
-                                } else {
-                                    Text("Invite friends, earn free months")
-                                        .scaledFont(size: 13)
-                                        .foregroundColor(FazmColors.textTertiary)
-                                }
-                            } else {
-                                Text("Invite friends, earn free months")
-                                    .scaledFont(size: 13)
-                                    .foregroundColor(FazmColors.textTertiary)
-                            }
-                        }
-
-                        Spacer()
-
-                        if let status = referralStatus, !status.code.isEmpty {
-                            Button(action: {
-                                Task { try? await ReferralService.shared.copyReferralLink() }
-                                referralLinkCopied = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { referralLinkCopied = false }
-                            }) {
-                                HStack(spacing: 4) {
-                                    Image(systemName: referralLinkCopied ? "checkmark" : "doc.on.doc")
-                                        .scaledFont(size: 11)
-                                    Text(referralLinkCopied ? "Copied!" : "Copy Link")
-                                        .scaledFont(size: 13, weight: .semibold)
-                                }
-                                .foregroundColor(referralLinkCopied ? FazmColors.success : FazmColors.textSecondary)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 6)
-                                .background(FazmColors.backgroundTertiary)
-                                .cornerRadius(6)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-
-                    if let status = referralStatus, !status.code.isEmpty {
-                        Divider().foregroundColor(FazmColors.border)
-
-                        // Referral code display
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Your code")
-                                    .scaledFont(size: 11)
-                                    .foregroundColor(FazmColors.textTertiary)
-                                Text(status.code)
-                                    .scaledFont(size: 15, weight: .bold)
-                                    .foregroundColor(FazmColors.textPrimary)
-                                    .tracking(2)
-                            }
-
-                            Spacer()
-
-                            // Stats
-                            HStack(spacing: 16) {
-                                VStack(spacing: 2) {
-                                    Text("\(status.referred_count)")
-                                        .scaledFont(size: 15, weight: .bold)
-                                        .foregroundColor(FazmColors.textPrimary)
-                                    Text("Referred")
-                                        .scaledFont(size: 11)
-                                        .foregroundColor(FazmColors.textTertiary)
-                                }
-                                VStack(spacing: 2) {
-                                    Text("\(status.completed_count)")
-                                        .scaledFont(size: 15, weight: .bold)
-                                        .foregroundColor(FazmColors.success)
-                                    Text("Completed")
-                                        .scaledFont(size: 11)
-                                        .foregroundColor(FazmColors.textTertiary)
-                                }
-                                VStack(spacing: 2) {
-                                    Text("$\(status.reward_months * 49)")
-                                        .scaledFont(size: 15, weight: .bold)
-                                        .foregroundColor(FazmColors.purplePrimary)
-                                    Text("Credit")
-                                        .scaledFont(size: 11)
-                                        .foregroundColor(FazmColors.textTertiary)
-                                }
-                            }
-                        }
-
-                        // How it works
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("How it works")
-                                .scaledFont(size: 12, weight: .medium)
-                                .foregroundColor(FazmColors.textSecondary)
-                            Text("Share your link. When a friend installs Fazm and sends 5 messages, you both get $49 credit toward Pro.")
-                                .scaledFont(size: 12)
-                                .foregroundColor(FazmColors.textTertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-            }
-            .onAppear { loadReferralStatus() }
 
             settingsCard(settingId: "about.version") {
                 VStack(spacing: 16) {

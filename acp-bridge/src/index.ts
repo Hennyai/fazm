@@ -1651,6 +1651,9 @@ function isAcpAuthError(err: unknown): boolean {
  *  so it can refetch the key from the backend and silently retry, instead of
  *  pushing the user into an OAuth flow they were never using. */
 function isBuiltinKeyMode(): boolean {
+  if (process.env.FAZM_DIRECT_PROVIDER || process.env.OPENAI_API_KEY) {
+    return false;
+  }
   return !!process.env.ANTHROPIC_API_KEY;
 }
 
@@ -2242,6 +2245,12 @@ async function initializeAcp(): Promise<void> {
         logErr(`ACP init auth error in builtin mode (key may be rotated/invalid): ${errMsg}`);
         send({ type: "builtin_key_invalid", message: errMsg });
         throw err;
+      }
+      // Direct/bypass modes: if custom API keys are set, do not show Claude OAuth flow
+      if (process.env.FAZM_DIRECT_PROVIDER || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY) {
+        logErr(`ACP requires authentication, but direct/bypass configuration is active. Bypassing OAuth flow.`);
+        isInitialized = true;
+        return;
       }
       // AUTH_REQUIRED (or 401 wrapped as -32603)
       const data = (err as AcpError).data as {
@@ -3324,11 +3333,15 @@ async function handleQuery(msg: QueryMessage, _retryDepth = 0): Promise<void> {
   // Without this the previous-provider session leaks (its handler stays in
   // the private map, the SDK subprocess keeps the session alive), which over
   // time accumulates dead sessions on long-lived bridges.
-  const incomingProvider: SessionProvider = isCodexModel(msg.model)
-    ? "codex"
-    : isGeminiModel(msg.model)
-      ? "gemini"
-      : "claude";
+  const incomingProvider: SessionProvider = process.env.FAZM_USE_DIRECT_MODEL_ONLY === "true"
+    ? "direct-openai"
+    : isCodexModel(msg.model)
+      ? "codex"
+      : isGeminiModel(msg.model)
+        ? "gemini"
+        : isDirectOpenAIModel(msg.model)
+          ? "direct-openai"
+          : "claude";
   const _switchKey = msg.sessionKey ?? (msg.model || DEFAULT_MODEL);
   const _switchExisting = sessions.get(_switchKey);
   if (_switchExisting && _switchExisting.provider !== incomingProvider && _switchExisting.provider !== "claude") {
@@ -3360,6 +3373,26 @@ async function handleQuery(msg: QueryMessage, _retryDepth = 0): Promise<void> {
       logErr(`[PROVIDER-SWITCH] session/close on claude session ${_switchExisting.sessionId.slice(0, 8)} failed: ${err}`);
     });
     unregisterSession(_switchKey);
+  }
+
+  // Route to the direct-openai adapter if the user has enabled direct-only bypass mode.
+  if (process.env.FAZM_USE_DIRECT_MODEL_ONLY === "true") {
+    // Override the model if configured, so we don't send "claude-3-7-sonnet" to 
+    // an OpenAI endpoint that doesn't understand it.
+    // If no explicit direct model is set, we still pass through what was requested.
+    const effectiveModel = process.env.FAZM_DIRECT_MODEL || msg.model || "gpt-4o";
+    if (process.env.FAZM_DIRECT_MODEL) {
+      msg.model = process.env.FAZM_DIRECT_MODEL;
+    }
+    
+    await handleDirectOpenAIQuery(msg, {
+      logErr,
+      send,
+      sendWithSession,
+      getProvider: getDirectOpenAIProvider,
+      registerSession,
+    });
+    return;
   }
 
   // Phase 2.3: route Codex models to the codex-acp adapter. The Claude path
@@ -4522,6 +4555,11 @@ async function handleQuery(msg: QueryMessage, _retryDepth = 0): Promise<void> {
           activeSessionId = "";
           return;
         }
+        if (process.env.FAZM_DIRECT_PROVIDER || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY) {
+          logErr(`session/prompt auth error, but direct/bypass configuration is active. Returning error instead of starting OAuth.`);
+          sendWithSession(sessionId, { type: "error", message: "Authentication failed. Please verify your custom API key in Settings → Direct Model." });
+          return;
+        }
         if (authRetryCount >= MAX_AUTH_RETRIES) {
           logErr(`session/prompt auth error but max retries (${MAX_AUTH_RETRIES}) reached, giving up`);
           sendWithSession(sessionId, { type: "error", message: "Authentication required. Please disconnect and reconnect your Claude account in Settings." });
@@ -4740,6 +4778,11 @@ async function handleQuery(msg: QueryMessage, _retryDepth = 0): Promise<void> {
         const errMsg = err instanceof Error ? err.message : String(err);
         logErr(`Query auth error in builtin mode (key may be rotated/invalid): ${errMsg}`);
         sendWithSession(sessionId, { type: "builtin_key_invalid", message: errMsg });
+        return;
+      }
+      if (process.env.FAZM_DIRECT_PROVIDER || process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY) {
+        logErr(`Query auth error, but direct/bypass configuration is active. Returning error instead of starting OAuth.`);
+        sendWithSession(sessionId, { type: "error", message: "Authentication failed. Please verify your custom API key in Settings → Direct Model." });
         return;
       }
       if (authRetryCount >= MAX_AUTH_RETRIES) {

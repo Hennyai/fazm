@@ -640,7 +640,23 @@ actor ACPBridge {
     if let directKey = defaults.string(forKey: "directApiKey"), !directKey.isEmpty {
       env["OPENAI_API_KEY"] = directKey
       env["GEMINI_API_KEY"] = directKey // Also use for Gemini direct
+      
+      // If it looks like an Anthropic key, or provider is explicitly set to Anthropic,
+      // set ANTHROPIC_API_KEY so the Claude path in the bridge bypasses OAuth.
+      if directKey.hasPrefix("sk-ant-") || defaults.string(forKey: "directProviderType") == "anthropic" {
+        env["ANTHROPIC_API_KEY"] = directKey
+        
+        // Also forward the base URL if custom
+        if let directBase = defaults.string(forKey: "directApiBase"), !directBase.isEmpty, directBase != "https://api.anthropic.com" {
+          env["ANTHROPIC_BASE_URL"] = directBase
+        }
+      }
     }
+    
+    if defaults.bool(forKey: "useDirectModelOnly") {
+      env["FAZM_USE_DIRECT_MODEL_ONLY"] = "true"
+    }
+
     if let directBase = defaults.string(forKey: "directApiBase"), !directBase.isEmpty {
       env["OPENAI_API_BASE"] = directBase
     }

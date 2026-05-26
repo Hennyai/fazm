@@ -13,10 +13,7 @@ struct SettingsPage: View {
 
     var body: some View {
         Group {
-            if selectedSection == .chatWithFounder {
-                // Chat page fills the entire content area (no header/scroll wrapper)
-                FounderChatPage()
-            } else if selectedSection == .memoryGraph {
+            if selectedSection == .memoryGraph {
                 // Memory graph fills the entire content area (full-bleed 3D scene)
                 MemoryGraphPage()
             } else {
@@ -199,7 +196,6 @@ struct SettingsContentView: View {
     enum SettingsSection: String, CaseIterable {
         case conversationHistory = "Conversations"
         case home = "Floating Bar"
-        case chatWithFounder = "Chat with Founder"
         case routines = "Routines"
         case discoveredTasks = "Discovered Tasks"
         case remoteControl = "Remote Control"
@@ -257,8 +253,6 @@ struct SettingsContentView: View {
                     HomeSection(appState: appState)
                 case .conversationHistory:
                     ConversationHistorySection(chatProvider: chatProvider, appState: appState)
-                case .chatWithFounder:
-                    FounderChatPage()
                 case .routines:
                     RoutinesSection(chatProvider: chatProvider)
                 case .discoveredTasks:

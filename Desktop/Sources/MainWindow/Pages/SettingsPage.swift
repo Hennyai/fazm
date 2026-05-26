@@ -126,6 +126,12 @@ struct SettingsContentView: View {
     // Dev Mode setting
     @AppStorage("devModeEnabled") private var devModeEnabled = false
 
+    // Direct Model settings
+    @AppStorage("directProviderType") private var directProviderType: String = "openai"
+    @AppStorage("directApiKey") private var directApiKey: String = ""
+    @AppStorage("directApiBase") private var directApiBase: String = ""
+    @AppStorage("directModelName") private var directModelName: String = ""
+
     // Voice Response (TTS) settings
     @AppStorage("voiceResponseEnabled") private var voiceResponseEnabled = true
     @AppStorage("voiceResponseSpeed") private var voiceResponseSpeed: Double = 1.0
@@ -201,6 +207,7 @@ struct SettingsContentView: View {
     enum AdvancedSubsection: String, CaseIterable {
         case aiChat = "AI Chat"
         case mcpServers = "MCP Servers"
+        case directModel = "Direct Model"
         case preferences = "Preferences"
         case troubleshooting = "Troubleshooting"
 
@@ -208,6 +215,7 @@ struct SettingsContentView: View {
             switch self {
             case .aiChat: return "cpu"
             case .mcpServers: return "server.rack"
+            case .directModel: return "externaldrive.badge.icloud"
             case .preferences: return "slider.horizontal.3"
             case .troubleshooting: return "wrench.and.screwdriver"
             }
@@ -2504,6 +2512,8 @@ struct SettingsContentView: View {
                 aiChatSection
             case .mcpServers:
                 mcpServersSubsection
+            case .directModel:
+                directModelSettingsSection
             case .preferences:
                 preferencesSubsection
             case .troubleshooting:
@@ -2946,6 +2956,105 @@ struct SettingsContentView: View {
                 .lineLimit(2)
                 .truncationMode(.tail)
             Spacer()
+        }
+    }
+
+    // MARK: Direct Model
+
+    private var directModelSettingsSection: some View {
+        VStack(spacing: 20) {
+            settingsCard(settingId: "advanced.directmodel.config") {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "cpu")
+                            .scaledFont(size: 16, weight: .medium)
+                            .foregroundColor(FazmColors.purplePrimary)
+                            .frame(width: 12)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Direct Model Configuration")
+                                .scaledFont(size: 16, weight: .semibold)
+                                .foregroundColor(FazmColors.textPrimary)
+                            Text("Configure a local or direct AI provider to bypass Fazm servers.")
+                                .scaledFont(size: 13)
+                                .foregroundColor(FazmColors.textTertiary)
+                        }
+
+                        Spacer()
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Provider Type")
+                            .scaledFont(size: 13, weight: .medium)
+                            .foregroundColor(FazmColors.textSecondary)
+
+                        Picker("", selection: $directProviderType) {
+                            Text("OpenAI / Groq").tag("openai")
+                            Text("Google AI (Gemini)").tag("google")
+                            Text("Ollama").tag("ollama")
+                        }
+                        .pickerStyle(.segmented)
+                        .onChange(of: directProviderType) { _, newValue in
+                            if newValue == "ollama" && directApiBase.isEmpty {
+                                directApiBase = "http://localhost:11434/v1"
+                            } else if newValue == "openai" && directApiBase.isEmpty {
+                                directApiBase = "https://api.openai.com/v1"
+                            } else if newValue == "google" && directApiBase.isEmpty {
+                                directApiBase = "https://generativelanguage.googleapis.com/v1beta"
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("API Key")
+                            .scaledFont(size: 13, weight: .medium)
+                            .foregroundColor(FazmColors.textSecondary)
+
+                        SecureField("Enter API Key", text: $directApiKey)
+                            .textFieldStyle(.plain)
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(FazmColors.backgroundTertiary)
+                            )
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("API Base URL")
+                            .scaledFont(size: 13, weight: .medium)
+                            .foregroundColor(FazmColors.textSecondary)
+
+                        TextField("https://api.openai.com/v1", text: $directApiBase)
+                            .textFieldStyle(.plain)
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(FazmColors.backgroundTertiary)
+                            )
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Model Name")
+                            .scaledFont(size: 13, weight: .medium)
+                            .foregroundColor(FazmColors.textSecondary)
+
+                        TextField("e.g. gpt-4o, llama3, gemini-1.5-pro", text: $directModelName)
+                            .textFieldStyle(.plain)
+                            .padding(8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(FazmColors.backgroundTertiary)
+                            )
+                    }
+
+                    HStack {
+                        Spacer()
+                        Text("Changes take effect on the next message.")
+                            .scaledFont(size: 11)
+                            .foregroundColor(FazmColors.textTertiary)
+                    }
+                }
+            }
         }
     }
 

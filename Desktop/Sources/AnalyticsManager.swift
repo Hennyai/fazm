@@ -27,6 +27,9 @@ class AnalyticsManager {
     // MARK: - Initialization
 
     func initialize() {
+        log("Analytics: Services disabled by user request")
+        return;
+        
         PostHogManager.shared.initialize()
         if Self.isDevBuild {
             // Tag all dev events so they can be filtered out in PostHog dashboards

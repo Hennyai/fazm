@@ -19,6 +19,10 @@ class PostHogManager {
 
     /// Initialize PostHog with analytics
     func initialize() {
+        log("PostHog: Initialization disabled by user request")
+        isInitialized = false
+        return;
+        
         guard !isInitialized else { return }
 
         // Migration: clear the isIdentified flag that was incorrectly set by older

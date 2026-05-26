@@ -633,6 +633,21 @@ actor ACPBridge {
       env["FAZM_TOOL_TIMEOUT_SECONDS"] = String(toolTimeout)
     }
 
+    // Direct Model settings
+    if let directProvider = defaults.string(forKey: "directProviderType"), !directProvider.isEmpty {
+      env["FAZM_DIRECT_PROVIDER"] = directProvider
+    }
+    if let directKey = defaults.string(forKey: "directApiKey"), !directKey.isEmpty {
+      env["OPENAI_API_KEY"] = directKey
+      env["GEMINI_API_KEY"] = directKey // Also use for Gemini direct
+    }
+    if let directBase = defaults.string(forKey: "directApiBase"), !directBase.isEmpty {
+      env["OPENAI_API_BASE"] = directBase
+    }
+    if let directModel = defaults.string(forKey: "directModelName"), !directModel.isEmpty {
+      env["OPENAI_MODEL"] = directModel
+    }
+
     // Pass app bundle path so acp-bridge can find bundled binaries/resources
     // (Node may run from /tmp due to NodeBinaryHelper, so process.execPath is unreliable)
     if let resourcePath = Bundle.main.resourcePath {

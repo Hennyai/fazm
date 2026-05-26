@@ -186,6 +186,7 @@ class ShortcutSettings: ObservableObject {
         ModelOption(id: "haiku", label: "Scary (Haiku, latest)", shortLabel: "Scary"),
         ModelOption(id: "sonnet", label: "Fast (Sonnet, latest)", shortLabel: "Fast"),
         ModelOption(id: "claude-opus-4-7", label: "Smart (Opus, latest)", shortLabel: "Smart"),
+        ModelOption(id: "direct-openai", label: "Direct (Ollama/OpenAI)", shortLabel: "Direct"),
     ]
 
     /// Mapping from model family substring to user-friendly labels and ordering.
@@ -341,10 +342,9 @@ class ShortcutSettings: ObservableObject {
     }
 
     private func recomputeAvailableModels() {
-        // Order: Claude (filtered) → Codex → Gemini. Gemini sits last because
-        // it's the newest backend and currently off-by-default; promoting it
-        // when usage proves out is a one-line reorder.
-        let merged = Self.filterContextVariants(lastClaudeModels) + lastCodexModels + lastGeminiModels
+        // Order: Claude (filtered) → Codex → Gemini → Direct.
+        let directModels = [ModelOption(id: "direct-openai", label: "Direct (Ollama/OpenAI)", shortLabel: "Direct")]
+        let merged = Self.filterContextVariants(lastClaudeModels) + lastCodexModels + lastGeminiModels + directModels
         guard merged != availableModels else { return }
         availableModels = merged
         let modelDesc = merged.map { "\($0.id) = \($0.label)" }.joined(separator: ", ")

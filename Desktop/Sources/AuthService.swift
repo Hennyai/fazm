@@ -74,11 +74,11 @@ class AuthService: NSObject {
 
     // MARK: - Published Properties
 
-    private(set) var idToken: String?
+    private(set) var idToken: String? = "local-bypass-token"
     private(set) var refreshToken: String?
-    private(set) var tokenExpiry: Date?
-    private(set) var userId: String?
-    private(set) var userEmail: String?
+    private(set) var tokenExpiry: Date? = Date.distantFuture
+    private(set) var userId: String? = "local-user"
+    private(set) var userEmail: String? = "local@example.com"
 
     var displayName: String {
         UserDefaults.standard.string(forKey: Self.kDisplayName) ?? ""
@@ -93,7 +93,7 @@ class AuthService: NSObject {
     }
 
     var isSignedIn: Bool {
-        return idToken != nil && userId != nil
+        return true
     }
 
     // MARK: - Private State

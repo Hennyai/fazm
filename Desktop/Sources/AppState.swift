@@ -48,7 +48,10 @@ enum RelaunchSupervisor {
 
 @MainActor
 class AppState: ObservableObject {
-    @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding = false
+    var hasCompletedOnboarding: Bool {
+        get { return true }
+        set { }
+    }
 
     // Permission states for onboarding
     @Published var hasScreenRecordingPermission = false

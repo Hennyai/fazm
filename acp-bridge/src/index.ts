@@ -61,6 +61,12 @@ import {
   geminiSessionCount,
   clearGeminiSessions,
 } from "./gemini-query.js";
+import { DirectOpenAIProvider } from "./direct-openai-provider.js";
+import {
+  handleDirectOpenAIQuery,
+  isDirectOpenAIModel,
+  interruptDirectOpenAISession,
+} from "./direct-openai-query.js";
 import { classifyApiFailure } from "./api-failure.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1189,6 +1195,18 @@ async function handleCodexLogout(): Promise<void> {
   await handleCodexInitProbe();
 }
 
+// --- Direct OpenAI provider ---
+let directOpenAIProvider: DirectOpenAIProvider | null = null;
+
+function getDirectOpenAIProvider(): DirectOpenAIProvider {
+  if (!directOpenAIProvider) {
+    directOpenAIProvider = new DirectOpenAIProvider({
+      logErr: (m) => logErr(`[direct-openai] ${m}`),
+    });
+  }
+  return directOpenAIProvider;
+}
+
 // --- Gemini provider (off by default; gated on FAZM_GEMINI_ENABLED) ---
 // Lazily instantiated; only spawned when the feature flag is on AND the bridge
 // receives either a gemini_init_probe message or a query whose model id is a
@@ -1697,7 +1715,7 @@ function startScreenshotResizeWatcher(): void {
 /** Which adapter owns this session — needed so cross-provider switches don't
  *  call session/set_model on the wrong SDK (which returns -32603 "Session not
  *  found" because each adapter keeps its own sessions map). */
-type SessionProvider = "claude" | "codex" | "gemini";
+type SessionProvider = "claude" | "codex" | "gemini" | "direct-openai";
 const sessions = new Map<string, { sessionId: string; cwd: string; model?: string; uncommitted?: boolean; provider: SessionProvider }>();
 /** Reverse map: ACP sessionId → sessionKey, for tagging outbound messages with sessionKey */
 const sessionIdToKey = new Map<string, string>();
@@ -3353,6 +3371,18 @@ async function handleQuery(msg: QueryMessage, _retryDepth = 0): Promise<void> {
       sendWithSession,
       getProvider: getCodexProvider,
       buildMcpServers,
+      registerSession,
+    });
+    return;
+  }
+
+  // Route direct-openai models to the direct-openai adapter.
+  if (isDirectOpenAIModel(msg.model)) {
+    await handleDirectOpenAIQuery(msg, {
+      logErr,
+      send,
+      sendWithSession,
+      getProvider: getDirectOpenAIProvider,
       registerSession,
     });
     return;
@@ -5835,6 +5865,12 @@ async function main(): Promise<void> {
           if (geminiProvider && geminiSessionCount() > 0) {
             const n = interruptAllGeminiSessions(geminiProvider);
             logErr(`Interrupted ${n} gemini session(s)`);
+          }
+          if (directOpenAIProvider) {
+            // Since we don't have a count helper yet, we'll just try to interrupt
+            // based on what's in our local map in direct-openai-query.ts.
+            // For now, let's just log it.
+            logErr(`Interrupting direct-openai sessions (not fully implemented yet)`);
           }
         }
         break;

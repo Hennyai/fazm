@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:fazm}/Desktop",
+            "name": "Debug Fazm (Desktop)",
+            "target": "Fazm",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Fazm (Desktop)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:fazm}/Desktop",
+            "name": "Release Fazm (Desktop)",
+            "target": "Fazm",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Fazm (Desktop)"
+        }
+    ]
+}
